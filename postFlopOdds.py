@@ -4,6 +4,26 @@ from math import comb
 from itertools import combinations
 
 suits = ['s','h','d','c']
+ranks = ['A','2','3','4','5','6','7','8','9','T','J','Q','K']
+rank_map = {
+        12: 'A', 11: 'K', 10: 'Q', 9: 'J', 8: 'T', 
+        7: '9', 6: '8', 5: '7', 4: '6', 3: '5', 
+        2: '4', 1: '3', 0: '2', -1:'A'
+    }
+
+straightSequences = [
+    {12, 0, 1, 2, 3}, # A, 2, 3, 4, 5 (Wheel)
+    {0, 1, 2, 3, 4},  # 2, 3, 4, 5, 6
+    {1, 2, 3, 4, 5},  # 3, 4, 5, 6, 7
+    {2, 3, 4, 5, 6},  # 4, 5, 6, 7, 8
+    {3, 4, 5, 6, 7},  # 5, 6, 7, 8, 9
+    {4, 5, 6, 7, 8}, # 6, 7, 8, 9, T
+    {5, 6, 7, 8, 9},# 7, 8, 9, T, J
+    {6, 7, 8, 9, 10},# 8, 9, T, J, Q
+    {7, 8, 9, 10, 11},# 9, T, J, Q, K
+    {8, 9, 10, 11, 12} # T, J, Q, K, A (Broadway)
+]
+
 
 def postFlopOdds(card1,card2, flop, deck, num_players=2):
     
@@ -23,6 +43,11 @@ def postFlopOdds(card1,card2, flop, deck, num_players=2):
     p1_class = evaluator.class_to_string(evaluator.get_rank_class(p1_score))
 
     royalFlushProbability, royalFlushPossibleProbability =  royalFlushEvaluator(hand, board, deck, num_players)
+
+    straightFlushProbability, straightFlushPossibleProbability = straightFlushEvaluator(hand, board, deck, num_players)
+
+    return straightFlushProbability
+
 
 def royalFlushEvaluator(hand, board, deck, num_players):
 
@@ -62,7 +87,7 @@ def royalFlushEvaluator(hand, board, deck, num_players):
                 royalFlush=False
         
         if(royalFlush==True):
-            royalFlushProbability = (num_players-1)/comb(len(deck.cards),2)
+            royalFlushProbability = (num_players-1)/comb(len(deck.cards),len(list(royalFlushCards)))
     else:
             royalFlushProbability = 0
 
@@ -134,8 +159,62 @@ def royalFlushEvaluator(hand, board, deck, num_players):
 
     return royalFlushProbability, royalFlushPossibleProbability
 
+def straightFlushEvaluator(hand, board, deck, num_players):
+    straightFlush=True
+    suitSet = set()
+    rankList = []
+    for card in board:
+        suitSet.add(Card.get_suit_int(card))
+        if(Card.get_rank_int(card) not in rankList):
+            rankList.append(Card.get_rank_int(card))
+
+    if(len(suitSet)!=1):
+        straightFlush=False
+    if(len(rankList)<3):
+        straightFlush=False
+    
+    if(straightFlush==True):
+        rankList.sort(reverse=True)
+        distance = rankList[0] - rankList[1] - rankList[2] - 2
+        if(distance>2):
+            if(rankList[0]==14):
+                rankList[0] = 2
+                rankList.sort(reverse=True)
+                distance = (rankList[0] - rankList[1]) + (rankList[1]-rankList[2]) - 2
+
+                if(distance<2):
+                    straightFlush=False
+            else:
+                straightFlush=False
+
+
+    straightFlushProbability = 0
+    if(straightFlush==True):
+        suitNeeded = Card.INT_SUIT_TO_CHAR_SUIT[list(suitSet)[0]]
+        cards_ranks_needed=[]
+
+        for sequence in straightSequences:
+            difference = sequence.difference(set(rankList))
+            if(len(difference)<=2):
+                cards_ranks_needed.append(sequence.difference(set(rankList)))
+        
+        cards_needed = []
+        for cards in cards_ranks_needed:
+            temp = []
+            for rank in cards:
+                if(Card.new(rank_map[rank]+suitNeeded) not in hand):
+                    temp.append(Card.new(rank_map[rank]+suitNeeded))
+            if(len(temp)==2):
+                cards_needed.append(temp)
+
+        straightFlushProbability = 1 - (1 - len(cards_needed)/1081) ** num_players
+
+    straightFlushPossibleProbability = 0.0
+
+    return straightFlushProbability, straightFlushPossibleProbability
 
 def simulation(card1, card2, flop, num_players, simulations=1000):
+    
     hand = [Card.new(card1), Card.new(card2)]
 
     evaluator = Evaluator()
@@ -147,7 +226,7 @@ def simulation(card1, card2, flop, num_players, simulations=1000):
             board = [Card.new(flop[0]), Card.new(flop[1]), Card.new(flop[2])]
             deck = Deck()
             deck.shuffle()
-            
+
             for card in hand:
                 if card in deck.cards:
                     deck.cards.remove(card)
@@ -155,32 +234,46 @@ def simulation(card1, card2, flop, num_players, simulations=1000):
             for card in board:
                 if card in deck.cards:
                     deck.cards.remove(card)
-
             # Deal other players' hands
             opponents_hands = []
             for _ in range(num_players - 1):
                 opponents_hands.append(deck.draw(2))
             
-            deck.draw(1) #burn card
-            board.append(deck.draw(1)[0]) #turn
-
-            deck.draw(1) #burn card
-            board.append(deck.draw(1)[0]) #river
-
-
             for opp_hand in opponents_hands:
                 score = evaluator.evaluate(board, opp_hand)
-                if(score==1):
+                if(score>=1 and score<=10):
                     wins+=1
                     break
+
+            # deck.draw(1) #burn card (before flop)
+
+            # deck.draw(1) #burn card (before turn)
+            # board.append(deck.draw(1)[0]) #turn
+
+            # deck.draw(1) #burn card (before river)
+            # board.append(deck.draw(1)[0]) #river
+
+
+            # for opp_hand in opponents_hands:
+            #     score = evaluator.evaluate(board, opp_hand)
+            #     if(score>=1 and score<=10):
+            #         wins+=1
+            #         break
 
         odds = wins/simulations
         return odds
 deck = Deck()
 
-postFlopOdds("5d","7h",["As","Ts","Qs"],deck, 2)
+# postFlopOdds("5d","7h",["As","Ts","Qs"],deck, 2)
 
-# players = [2, 3, 5, 8, 10, 15, 20, 22]
+evaluator = Evaluator()
+
+
+players = [2, 3, 5, 8, 10, 15, 20, 22]
+
+
+# calculatedProbability = postFlopOdds("Qc","3d",["Th","Kh","Jh"],Deck(),2)
+
 
 # for num in players:
 
@@ -205,5 +298,7 @@ postFlopOdds("5d","7h",["As","Ts","Qs"],deck, 2)
 #             print("Large difference")
 #             print(f"Difference: {calculatedProbability-simulatedProbability}")
 #             print(f"{calculatedProbability} , {simulatedProbability}")
+#             print([card1,card2])
+#             print([flop1,flop2,flop3])
 
 #             print("\n")
